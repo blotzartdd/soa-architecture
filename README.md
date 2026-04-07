@@ -321,70 +321,68 @@ CREATED → SENDING_CH1 → DELIVERED (done)
 
 #### Sequence Diagram — основной сценарий (успешный push)
 
-```plantuml
-@startuml
-participant "Payment\nService" as PS
-participant "API\nGateway" as API
-queue "Kafka\n(tx-topic)" as K
-participant "Delivery\nOrchestrator" as DO
-database "PostgreSQL" as DB
-database "Redis" as R
-participant "Push\nAdapter" as PA
-participant "FCM" as FCM
+```mermaid
+sequenceDiagram
+    participant PS as Payment Service
+    participant API as API Gateway
+    participant K as Kafka (tx-topic)
+    participant DO as Delivery Orchestrator
+    participant DB as PostgreSQL
+    participant R as Redis
+    participant PA as Push Adapter
+    participant FCM as FCM
 
-PS -> API: POST /notify (tx, userId, payload)
-API -> K: produce(tx-notification)
-API --> PS: 202 Accepted
+    PS->>API: POST /notify (tx, userId, payload)
+    API->>K: produce(tx-notification)
+    API-->>PS: 202 Accepted
 
-K -> DO: consume(tx-notification)
-DO -> R: get user preferences + idempotency check
-R --> DO: {preferredChannel: push, idempotencyKey: NOT_EXISTS}
-DO -> DB: INSERT delivery_state(CREATED) + outbox(SEND_PUSH)
-DO -> PA: send push
-PA -> FCM: HTTP POST
-FCM --> PA: 200 OK (accepted)
-PA --> DO: sent OK
-DO -> DB: UPDATE state → SENDING_CH1
+    K->>DO: consume(tx-notification)
+    DO->>R: get user preferences + idempotency check
+    R-->>DO: {preferredChannel: push, key: NOT_EXISTS}
+    DO->>DB: INSERT delivery_state(CREATED) + outbox(SEND_PUSH)
+    DO->>PA: send push
+    PA->>FCM: HTTP POST
+    FCM-->>PA: 200 OK (accepted)
+    PA-->>DO: sent OK
+    DO->>DB: UPDATE state → SENDING_CH1
 
-note over DO: Wait for delivery confirmation (timeout=10s)
+    Note over DO: Wait for delivery confirmation (timeout=10s)
 
-FCM -> DO: webhook: delivered
-DO -> DB: UPDATE state → DELIVERED
-DO -> R: SET idempotency_key TTL=24h
-@enduml
+    FCM->>DO: webhook: delivered
+    DO->>DB: UPDATE state → DELIVERED
+    DO->>R: SET idempotency_key TTL=24h
 ```
 
 #### Sequence Diagram — failover (push failed -> SMS)
 
-```plantuml
-@startuml
-participant "Delivery\nOrchestrator" as DO
-database "PostgreSQL" as DB
-participant "Push\nAdapter" as PA
-participant "FCM" as FCM
-participant "SMS\nAdapter" as SA
-participant "SMS\nGateway" as SG
+```mermaid
+sequenceDiagram
+    participant DO as Delivery Orchestrator
+    participant DB as PostgreSQL
+    participant PA as Push Adapter
+    participant FCM as FCM
+    participant SA as SMS Adapter
+    participant SG as SMS Gateway
 
-DO -> PA: send push
-PA -> FCM: HTTP POST
-FCM --> PA: 200 OK
+    DO->>PA: send push
+    PA->>FCM: HTTP POST
+    FCM-->>PA: 200 OK
 
-note over DO: Wait 10s for delivery confirmation...
-note over DO: TIMEOUT — no delivery callback
+    Note over DO: Wait 10s for delivery confirmation...
+    Note over DO: TIMEOUT — no delivery callback
 
-DO -> DB: UPDATE state → FAILED_CH1
-DO -> SA: send SMS (fallback)
-SA -> SG: HTTP POST
-SG --> SA: 200 OK (message_id)
-SA --> DO: sent OK
-DO -> DB: UPDATE state → SENDING_CH2
+    DO->>DB: UPDATE state → FAILED_CH1
+    DO->>SA: send SMS (fallback)
+    SA->>SG: HTTP POST
+    SG-->>SA: 200 OK (message_id)
+    SA-->>DO: sent OK
+    DO->>DB: UPDATE state → SENDING_CH2
 
-SG -> DO: webhook: delivered
-DO -> DB: UPDATE state → DELIVERED
+    SG->>DO: webhook: delivered
+    DO->>DB: UPDATE state → DELIVERED
 
-note over DO: Late push delivery callback arrives
-DO -> DB: state = DELIVERED → ignore (idempotent)
-@enduml
+    Note over DO: Late push callback arrives
+    DO->>DB: state = DELIVERED → ignore (idempotent)
 ```
 
 #### Как решение удовлетворяет ASR
@@ -465,63 +463,62 @@ DO -> DB: state = DELIVERED → ignore (idempotent)
 
 #### Sequence Diagram — основной сценарий
 
-```plantuml
-@startuml
-participant "Payment\nService" as PS
-participant "API\nGateway" as API
-queue "Kafka" as K
-participant "Router" as R
-participant "Push\nWorker" as PW
-participant "FCM" as FCM
-participant "Delivery\nTracker" as DT
-database "PostgreSQL" as DB
+```mermaid
+sequenceDiagram
+    participant PS as Payment Service
+    participant API as API Gateway
+    participant K as Kafka
+    participant R as Router
+    participant PW as Push Worker
+    participant FCM as FCM
+    participant DT as Delivery Tracker
+    participant DB as PostgreSQL
 
-PS -> API: POST /notify
-API -> K: produce(tx-new)
-API --> PS: 202 Accepted
+    PS->>API: POST /notify
+    API->>K: produce(tx-new)
+    API-->>PS: 202 Accepted
 
-K -> R: consume(tx-new)
-R -> K: produce(ch1-send: push)
+    K->>R: consume(tx-new)
+    R->>K: produce(ch1-send: push)
 
-K -> PW: consume(ch1-send)
-PW -> FCM: send push
-FCM --> PW: delivered callback
-PW -> K: produce(delivered, {notif_id, channel: push})
+    K->>PW: consume(ch1-send)
+    PW->>FCM: send push
+    FCM-->>PW: delivered callback
+    PW->>K: produce(delivered, {channel: push})
 
-K -> DT: consume(delivered)
-DT -> DB: INSERT audit_log
-@enduml
+    K->>DT: consume(delivered)
+    DT->>DB: INSERT audit_log
 ```
+
 
 #### Sequence Diagram — failover
 
-```plantuml
-@startuml
-participant "Router" as R
-queue "Kafka" as K
-participant "Push\nWorker" as PW
-participant "FCM" as FCM
-participant "SMS\nWorker" as SW
-participant "SMS GW" as SG
-participant "Delivery\nTracker" as DT
-database "PostgreSQL" as DB
+```mermaid
+sequenceDiagram
+    participant R as Router
+    participant K as Kafka
+    participant PW as Push Worker
+    participant FCM as FCM
+    participant SW as SMS Worker
+    participant SG as SMS Gateway
+    participant DT as Delivery Tracker
+    participant DB as PostgreSQL
 
-K -> PW: consume(ch1-send)
-PW -> FCM: send push
-note over PW: Timeout 10s, no delivery confirmation
-PW -> K: produce(ch1-fail, {notif_id, reason: timeout})
+    K->>PW: consume(ch1-send)
+    PW->>FCM: send push
+    Note over PW: Timeout 10s, no delivery confirmation
+    PW->>K: produce(ch1-fail, {reason: timeout})
 
-K -> R: consume(ch1-fail)
-R -> K: produce(ch2-send: SMS)
+    K->>R: consume(ch1-fail)
+    R->>K: produce(ch2-send: SMS)
 
-K -> SW: consume(ch2-send)
-SW -> SG: send SMS
-SG --> SW: delivered
-SW -> K: produce(delivered, {notif_id, channel: SMS})
+    K->>SW: consume(ch2-send)
+    SW->>SG: send SMS
+    SG-->>SW: delivered
+    SW->>K: produce(delivered, {channel: SMS})
 
-K -> DT: consume(delivered)
-DT -> DB: INSERT audit_log
-@enduml
+    K->>DT: consume(delivered)
+    DT->>DB: INSERT audit_log
 ```
 
 #### Как решение удовлетворяет ASR
